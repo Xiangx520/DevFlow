@@ -1,0 +1,84 @@
+diff --git a/packages/agent/CHANGELOG.md b/packages/agent/CHANGELOG.md
+index 9e80e2a..cb9f67c 100644
+--- a/packages/agent/CHANGELOG.md
++++ b/packages/agent/CHANGELOG.md
+@@ -2,6 +2,10 @@
+ 
+ ## [Unreleased]
+ 
++### Added
++
++- Added host-controlled model/tool execution boundaries with explicit stop reasons for DevFlow background sessions.
++
+ ## [1.5.0] - 2026-11-02
+ 
+ ### Breaking Changes
+diff --git a/packages/agent/src/index.ts b/packages/agent/src/index.ts
+index ca00bc7..6f1223a 100644
+--- a/packages/agent/src/index.ts
++++ b/packages/agent/src/index.ts
+@@ -1,5 +1,6 @@
+ export * from "./agent.ts";
+ export * from "./agent-loop.ts";
++export * from "./hosted.ts";
+ export * from "./proxy.ts";
+ export { setDefaultStreamFn } from "./stream-fn.ts";
+ export * from "./types.ts";
+diff --git a/packages/agent/src/hosted.ts b/packages/agent/src/hosted.ts
+new file mode 100644
+index 0000000..20422f7
+--- /dev/null
++++ b/packages/agent/src/hosted.ts
+@@ -0,0 +1,52 @@
++// Host-owned execution boundaries for durable background coding sessions.
++import type { Agent } from "./agent.ts";
++
++export type HostedStopReason = "paused" | "cancelled" | "budget" | "lease_expired";
++export type HostedBoundary = { sequence: number; kind: "model" | "tool"; tool?: string };
++export type HostedDecision = { stop: false } | { stop: true; reason: HostedStopReason };
++export interface HostedExecutionOptions {
++	check: (boundary: HostedBoundary) => Promise<HostedDecision>;
++	onBoundary: (boundary: HostedBoundary) => void;
++}
++export class HostedExecutionStopped extends Error {
++	readonly reason: HostedStopReason;
++	constructor(reason: HostedStopReason) {
++		super(`Hosted execution stopped: ${reason}`);
++		this.reason = reason;
++	}
++}
++/** Adds fail-closed host checks while preserving the existing Pi lifecycle hooks. */
++export function attachHostedExecution(
++	agent: Pick<Agent, "prepareRequest" | "beforeToolCall">,
++	options: HostedExecutionOptions,
++): { detach: () => void; getStopReason: () => HostedStopReason | undefined } {
++	const previousRequest = agent.prepareRequest;
++	const previousTool = agent.beforeToolCall;
++	let sequence = 0;
++	let stopReason: HostedStopReason | undefined;
++	const check = async (kind: "model" | "tool", tool?: string): Promise<HostedDecision> => {
++		const boundary: HostedBoundary = { sequence: ++sequence, kind, tool };
++		const decision = await options.check(boundary);
++		options.onBoundary(boundary);
++		if (decision.stop) stopReason = decision.reason;
++		return decision;
++	};
++	agent.prepareRequest = async (context, signal) => {
++		const decision = await check("model");
++		if (decision.stop) throw new HostedExecutionStopped(decision.reason);
++		const update = await previousRequest?.(context, signal);
++		return update || undefined;
++	};
++	agent.beforeToolCall = async (context, signal) => {
++		const decision = await check("tool", context.toolCall.name);
++		if (decision.stop) return { block: true, terminate: true, reason: decision.reason };
++		return previousTool?.(context, signal);
++	};
++	return {
++		detach: () => {
++			agent.prepareRequest = previousRequest;
++			agent.beforeToolCall = previousTool;
++		},
++		getStopReason: () => stopReason,
++	};
++}

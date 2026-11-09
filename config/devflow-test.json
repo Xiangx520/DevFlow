@@ -1,0 +1,27 @@
+{
+  "repository": "Xiangx520/DevFlow-test",
+  "default_branch": "main",
+  "policy": {
+    "allowed_actors": [
+      "Xiangx520"
+    ],
+    "agent_login": "",
+    "mode": "observe"
+  },
+  "config": {
+    "setup_commands": [
+      "python3 -m venv /tmp/devflow-test-venv",
+      "/tmp/devflow-test-venv/bin/python -m pip install -r requirements-dev.txt"
+    ],
+    "verify_commands": [
+      "/tmp/devflow-test-venv/bin/python -m pytest -q"
+    ],
+    "notify_feishu": true,
+    "limits": {
+      "turn_seconds": 1800,
+      "task_seconds": 7200,
+      "tokens": 500000,
+      "ci_repairs": 3
+    }
+  }
+}

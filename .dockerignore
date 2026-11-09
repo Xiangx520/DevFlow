@@ -1,0 +1,12 @@
+.git
+**/node_modules
+**/dist
+**/.git
+**/__pycache__
+**/.pytest_cache
+.env
+.data
+
+.venv
+review-tmp*
+artifacts

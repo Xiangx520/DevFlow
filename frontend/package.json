@@ -1,0 +1,1 @@
+{"name":"devflow-workbench","private":true,"type":"module","scripts":{"test":"node --test tests/*.test.js","check":"node --check src/app.js && node --check src/api.js && node --check src/ui.js","dev":"python server.py"},"engines":{"node":">=18"}}

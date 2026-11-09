@@ -1,0 +1,104 @@
+name: devflow
+services:
+  postgres:
+    restart: unless-stopped
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: devflow
+      POSTGRES_USER: devflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: [postgres:/var/lib/postgresql/data]
+    networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U devflow"]
+      interval: 3s
+      retries: 20
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: ${DEVFLOW_ENV_FILE:-.env}
+    environment:
+      DEVFLOW_DATABASE_URL: postgresql+psycopg://devflow:${POSTGRES_PASSWORD}@postgres/devflow
+    command: ["alembic","upgrade","head"]
+    networks: [control]
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: ${DEVFLOW_ENV_FILE:-.env}
+    environment:
+      DEVFLOW_DATABASE_URL: postgresql+psycopg://devflow:${POSTGRES_PASSWORD}@postgres/devflow
+    ports: ["127.0.0.1:8000:8000"]
+    networks: [control,execution]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  frontend:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      DEVFLOW_BACKEND_URL: http://api:8000
+    ports: ["127.0.0.1:3000:8000"]
+    networks: [control,web]
+    depends_on:
+      api: {condition: service_started}
+  worker:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: ${DEVFLOW_ENV_FILE:-.env}
+    environment:
+      DEVFLOW_DATABASE_URL: postgresql+psycopg://devflow:${POSTGRES_PASSWORD}@postgres/devflow
+      DEVFLOW_INTERNAL_URL: http://api:8000
+      DEVFLOW_RUNNER_NETWORK: devflow_execution
+    command: ["python","-m","devflow.worker"]
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    networks: [control,execution]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      api: {condition: service_started}
+  feishu:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: ${DEVFLOW_ENV_FILE:-.env}
+    environment:
+      DEVFLOW_DATABASE_URL: postgresql+psycopg://devflow:${POSTGRES_PASSWORD}@postgres/devflow
+    command: ["python", "-m", "devflow.feishu_receiver"]
+    networks: [control,execution]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  watchdog:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: ${DEVFLOW_ENV_FILE:-.env}
+    environment:
+      DEVFLOW_DATABASE_URL: postgresql+psycopg://devflow:${POSTGRES_PASSWORD}@postgres/devflow
+    command: ["python", "-m", "devflow.watchdog_main"]
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    networks: [control,execution]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  runner-image:
+    image: devflow-runner:local
+    profiles: [build]
+    build:
+      context: .
+      dockerfile: pi-service/Dockerfile
+networks:
+  web: {}
+  control:
+    internal: true
+  execution:
+    name: devflow_execution
+volumes:
+  postgres:
